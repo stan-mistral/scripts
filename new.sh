@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 #
-# new - create a new git branch named schan/<name>.
+# new - create a new git branch named schan/<name>, based on the latest
+# default branch.
 #
 # Usage:
 #   new            Generate a science-themed branch: schan/<adjective>-<noun>
@@ -8,6 +9,7 @@
 #
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="schan"
 
 adjectives=(
@@ -38,6 +40,10 @@ else
 fi
 
 branch="${PREFIX}/${name}"
+
+# Base the new branch on the latest default branch.
+"$SCRIPT_DIR/gpom.sh" --checkout \
+  || echo "new: could not update the default branch; branching from current HEAD" >&2
 
 git checkout -b "$branch"
 echo "Created and switched to branch: $branch"

@@ -1,17 +1,20 @@
 #!/usr/bin/env bash
 #
-# clean - delete local branches whose upstream remote branch is gone.
+# clean - delete dead local branches.
 #
 # Use case: after a PR is merged and its remote feature branch is deleted,
 # the local copy lingers. This switches to the default branch, pulls, prunes
-# remote-tracking refs, finds local branches whose upstream is gone, lists
-# them, and (on confirmation) force-deletes them. Switching to the default
-# branch first means the branch you were on can be deleted too.
+# remote-tracking refs, then collects dead local branches -- those whose
+# upstream is gone, plus those that never had an upstream (never pushed) --
+# lists them, and (on confirmation) force-deletes them. Switching to the
+# default branch first means the branch you were on can be deleted too.
 #
 # Usage:
 #   clean
 #
 set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "clean: not inside a git repository" >&2
@@ -44,15 +47,14 @@ if [[ "$(git branch --show-current)" != "$default" ]]; then
   fi
 fi
 
-echo "Pulling latest $default from origin..."
-git pull --ff-only >/dev/null 2>&1 || echo "clean: pull failed or no upstream; continuing with local state" >&2
-
 echo "Fetching and pruning remote-tracking branches..."
 git fetch --prune >/dev/null 2>&1
 
 current="$(git branch --show-current)"
 
-# Collect local branches whose upstream is marked [gone].
+# Collect dead local branches: upstream gone ([gone]) OR no upstream at all
+# (never pushed). The default branch is excluded because it is the current
+# branch at this point and gets skipped below.
 gone=()
 while IFS= read -r branch; do
   [[ -z "$branch" ]] && continue
@@ -62,8 +64,8 @@ while IFS= read -r branch; do
   fi
   gone+=("$branch")
 done < <(
-  git for-each-ref --format='%(refname:short) %(upstream:track)' refs/heads \
-    | awk '$2 == "[gone]" { print $1 }'
+  git for-each-ref --format='%(refname:short)|%(upstream)|%(upstream:track)' refs/heads \
+    | awk -F'|' '$2 == "" || $3 == "[gone]" { print $1 }'
 )
 
 if [[ ${#gone[@]} -eq 0 ]]; then
@@ -72,7 +74,7 @@ if [[ ${#gone[@]} -eq 0 ]]; then
 fi
 
 echo
-echo "The following local branches have a deleted upstream:"
+echo "The following local branches are dead (upstream gone or never pushed):"
 for b in "${gone[@]}"; do
   echo "  - $b"
 done
@@ -81,8 +83,15 @@ echo
 read -r -p "Force-delete these ${#gone[@]} branch(es)? [y/N] " reply
 case "$reply" in
   [yY] | [yY][eE][sS])
-    git branch -D "${gone[@]}"
-    echo "Done."
+    if git branch -D "${gone[@]}"; then
+      echo "Done."
+      echo
+      "$SCRIPT_DIR/gpom.sh" \
+        || echo "clean: branches deleted, but updating $default failed" >&2
+    else
+      echo "clean: branch deletion failed" >&2
+      exit 1
+    fi
     ;;
   *)
     echo "Aborted. No branches deleted."

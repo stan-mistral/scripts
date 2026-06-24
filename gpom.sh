@@ -6,9 +6,21 @@
 # Detects the default branch from origin/HEAD, falling back to main/master.
 #
 # Usage:
-#   gpom
+#   gpom              Pull origin's default branch into the current branch
+#   gpom --checkout   Switch to the default branch first, then pull
 #
 set -euo pipefail
+
+checkout=false
+for arg in "$@"; do
+  case "$arg" in
+    -c | --checkout) checkout=true ;;
+    *)
+      echo "gpom: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
 
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "gpom: not inside a git repository" >&2
@@ -30,6 +42,11 @@ fi
 if [[ -z "$default" ]]; then
   echo "gpom: could not determine the default branch on origin (no origin/HEAD, main, or master)" >&2
   exit 1
+fi
+
+if $checkout && [[ "$(git branch --show-current)" != "$default" ]]; then
+  echo "Switching to default branch: $default"
+  git checkout "$default"
 fi
 
 echo "Pulling origin/$default into $(git branch --show-current)..."
