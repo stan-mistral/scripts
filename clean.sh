@@ -48,7 +48,19 @@ if [[ "$(git branch --show-current)" != "$default" ]]; then
 fi
 
 echo "Fetching and pruning remote-tracking branches..."
-git fetch --prune >/dev/null 2>&1
+# Keep stderr visible: an SSH host-key/passphrase prompt or network stall here
+# would otherwise look like a silent hang. A connect timeout turns an
+# unreachable remote into a fast failure instead of an indefinite wait.
+#
+# Treat a non-zero fetch as a warning, not a fatal error. On a case-insensitive
+# filesystem, a single pair of upstream branches differing only in case (e.g.
+# gaspardBT/x vs gaspardbt/x) makes git fail with "cannot lock ref" even though
+# it has already pruned and updated every other ref. Dead-branch detection below
+# reads local tracking state, so cleanup can still proceed.
+if ! GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o ConnectTimeout=10}" \
+  git fetch --prune >/dev/null; then
+  echo "clean: fetch reported errors (continuing with cleanup anyway)" >&2
+fi
 
 current="$(git branch --show-current)"
 
