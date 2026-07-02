@@ -6,8 +6,12 @@
 # the local copy lingers. This switches to the default branch, pulls, prunes
 # remote-tracking refs, then collects dead local branches -- those whose
 # upstream is gone, plus those that never had an upstream (never pushed) --
-# lists them, and (on confirmation) force-deletes them. Switching to the
+# lists them, and force-deletes the ones you select. Switching to the
 # default branch first means the branch you were on can be deleted too.
+#
+# Selection is interactive: dead branches are shown with numbers, and you
+# pick which to delete (specific numbers, 'a'/'all' for everything, or
+# 'q'/empty to abort).
 #
 # Usage:
 #   clean
@@ -87,25 +91,76 @@ fi
 
 echo
 echo "The following local branches are dead (upstream gone or never pushed):"
-for b in "${gone[@]}"; do
-  echo "  - $b"
+for i in "${!gone[@]}"; do
+  printf "  %2d) %s\n" "$((i + 1))" "${gone[$i]}"
 done
 echo
 
-read -r -p "Force-delete these ${#gone[@]} branch(es)? [y/N] " reply
+echo "Select branches to delete:"
+echo "  - numbers separated by spaces or commas (e.g. 1 3 4)"
+echo "  - 'a' or 'all' to delete all"
+echo "  - empty or 'q' to abort"
+read -r -p "> " reply
+
+# Normalize: lowercase, replace commas with spaces.
+reply="$(printf '%s' "$reply" | tr '[:upper:],' '[:lower:] ')"
+
+selected=()
 case "$reply" in
-  [yY] | [yY][eE][sS])
-    if git branch -D "${gone[@]}"; then
-      echo "Done."
-      echo
-      "$SCRIPT_DIR/gpom.sh" \
-        || echo "clean: branches deleted, but updating $default failed" >&2
-    else
-      echo "clean: branch deletion failed" >&2
-      exit 1
-    fi
+  "" | q | quit)
+    echo "Aborted. No branches deleted."
+    exit 0
+    ;;
+  a | all)
+    selected=("${gone[@]}")
     ;;
   *)
-    echo "Aborted. No branches deleted."
+    for token in $reply; do
+      if ! [[ "$token" =~ ^[0-9]+$ ]]; then
+        echo "clean: invalid selection '$token' (expected a number, 'a', or 'q')" >&2
+        exit 1
+      fi
+      if (( token < 1 || token > ${#gone[@]} )); then
+        echo "clean: selection '$token' out of range (1-${#gone[@]})" >&2
+        exit 1
+      fi
+      selected+=("${gone[$((token - 1))]}")
+    done
     ;;
 esac
+
+# Deduplicate while preserving order (a branch listed twice shouldn't error).
+# Guard array expansions: bash 3.2 (macOS) errors on ${arr[@]} for an empty
+# array under `set -u`.
+unique=()
+for b in "${selected[@]}"; do
+  seen=""
+  if [[ ${#unique[@]} -gt 0 ]]; then
+    for u in "${unique[@]}"; do
+      [[ "$u" == "$b" ]] && { seen=1; break; }
+    done
+  fi
+  [[ -z "$seen" ]] && unique+=("$b")
+done
+selected=("${unique[@]}")
+
+if [[ ${#selected[@]} -eq 0 ]]; then
+  echo "Aborted. No branches deleted."
+  exit 0
+fi
+
+echo
+echo "Deleting ${#selected[@]} branch(es):"
+for b in "${selected[@]}"; do
+  echo "  - $b"
+done
+
+if git branch -D "${selected[@]}"; then
+  echo "Done."
+  echo
+  "$SCRIPT_DIR/gpom.sh" \
+    || echo "clean: branches deleted, but updating $default failed" >&2
+else
+  echo "clean: branch deletion failed" >&2
+  exit 1
+fi
